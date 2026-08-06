@@ -116,6 +116,22 @@ def is_empty_page(filtered_lines):
     return cjk_count == 0 and total <= MIN_NON_CJK_CHARS
 
 
+def ensure_em_dash_spacing(text, min_blank=3):
+    """Ensure lines beginning with an em dash have at least `min_blank` empty lines above."""
+    lines = text.splitlines()
+    result = []
+    for line in lines:
+        stripped = line.lstrip(" \t\u3000")
+        if stripped and stripped[0] in "\u2014\u2015":
+            blanks = 0
+            while blanks < len(result) and result[-(blanks + 1)] == "":
+                blanks += 1
+            if result and blanks < min_blank:
+                result.extend([""] * (min_blank - blanks))
+        result.append(line)
+    return "\n".join(result)
+
+
 def detect_paragraph_dividers(image_path, template_path, items, page_width):
     if not os.path.exists(template_path):
         return []
@@ -308,34 +324,41 @@ def main():
         use_textline_orientation=False,
     )
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        prev_centered = None
-        for i, img_path in enumerate(image_paths, 1):
-            name = Path(img_path).name
-            print(f"[{i}/{len(image_paths)}] {name}", flush=True)
-            page_lines = process_image(ocr, img_path, template_path=args.divider_icon)
-            if not page_lines:
-                continue
+    parts = []
+    prev_centered = None
+    for i, img_path in enumerate(image_paths, 1):
+        name = Path(img_path).name
+        print(f"[{i}/{len(image_paths)}] {name}", flush=True)
+        page_lines = process_image(ocr, img_path, template_path=args.divider_icon)
+        if not page_lines:
+            continue
 
-            is_centered = not any(line.startswith("　　") for line in page_lines)
+        is_centered = not any(line.startswith("　　") for line in page_lines)
 
-            if prev_centered is not None:
-                if not prev_centered and is_centered:
-                    # After body text and before a centered/empty/graphical page: 5 empty lines.
-                    f.write("\n\n\n\n\n\n")
-                elif prev_centered or is_centered:
-                    # Centered pages get 3 empty lines of separation.
-                    f.write("\n\n\n\n")
-                else:
-                    # Body pages get 1 empty line of separation.
-                    f.write("\n\n")
-
-            if is_centered:
-                f.write("\n".join(page_lines))
+        if prev_centered is not None:
+            if not prev_centered and is_centered:
+                # After body text and before a centered/empty/graphical page: 5 empty lines.
+                parts.append("\n\n\n\n\n\n")
+            elif prev_centered or is_centered:
+                # Centered pages get 3 empty lines of separation.
+                parts.append("\n\n\n\n")
             else:
-                f.write("\n\n".join(page_lines))
+                # Body pages get 1 empty line of separation.
+                parts.append("\n\n")
 
-            prev_centered = is_centered
+        if is_centered:
+            parts.append("\n".join(page_lines))
+        else:
+            parts.append("\n\n".join(page_lines))
+
+        prev_centered = is_centered
+
+    content = "".join(parts)
+    content = ensure_em_dash_spacing(content)
+    content = content.replace("\u2014", "\u2500")
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(content)
 
     print(f"\nDone. Combined output written to: {out_path}")
     return 0
