@@ -15,6 +15,7 @@ except Exception:
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 import paddle
+from PIL import Image
 from paddleocr import PaddleOCR
 
 HEADER_FOOTER_PATTERNS = [
@@ -55,9 +56,21 @@ def is_spacing_page(filtered_lines):
     return total <= SPACING_CHAR_THRESHOLD
 
 
-def rebuild_page(items):
+def is_centered_page(items, page_width):
+    if page_width <= 0 or not items:
+        return False
+    mean_x = statistics.mean(box[0] for _, box in items)
+    # Centered text sits past the first third of the page.
+    return mean_x > page_width * 0.30
+
+
+def rebuild_page(items, page_width=0):
     if not items:
         return []
+
+    # Centered pages (title/copyright) should keep each line on its own line.
+    if is_centered_page(items, page_width):
+        return [text for text, _ in items]
 
     heights = [box[3] - box[1] for _, box in items]
     med_h = statistics.median(heights) if heights else 0
@@ -112,7 +125,9 @@ def process_image(ocr_engine, path):
     if is_spacing_page([t for t, _ in filtered]):
         return ["---"]
 
-    return rebuild_page(filtered)
+    with Image.open(path) as img:
+        page_width = img.width
+    return rebuild_page(filtered, page_width)
 
 
 def main():
