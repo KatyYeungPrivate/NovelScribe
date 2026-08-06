@@ -1,4 +1,5 @@
 import argparse
+import bisect
 import glob
 import os
 import re
@@ -14,6 +15,8 @@ except Exception:
 
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
+import cv2
+import numpy as np
 import paddle
 from PIL import Image
 from paddleocr import PaddleOCR
@@ -28,14 +31,21 @@ HEADER_FOOTER_PATTERNS = [
 
 # CJK unified ideographs, CJK punctuation, fullwidth forms
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]")
-SPACING_CHAR_THRESHOLD = 10
 GAP_MULTIPLIER = 1.5
+MIN_NON_CJK_CHARS = 5
+
+DIVIDER_ICON_PATH = "gun_icon.png"
+DIVIDER_MATCH_THRESHOLD = 0.70
+DIVIDER_LOCAL_STD_THRESHOLD = 10.0
 
 
 def should_remove(text: str) -> bool:
     s = text.strip()
     if any(p.fullmatch(s) for p in HEADER_FOOTER_PATTERNS):
         return True
+    # Keep short digit-only strings (e.g. chapter numbers like "0")
+    if s.isdigit() and len(s) <= 2:
+        return False
     # Drop short stray UI characters that are not Chinese/punctuation
     if len(s) <= 2 and not _CJK_RE.search(s):
         return True
@@ -51,9 +61,79 @@ def sort_lines(texts, boxes):
     return items
 
 
-def is_spacing_page(filtered_lines):
+def is_empty_page(filtered_lines):
     total = sum(len(line) for line in filtered_lines)
-    return total <= SPACING_CHAR_THRESHOLD
+    cjk_count = sum(len(_CJK_RE.findall(line)) for line in filtered_lines)
+    # Skip pages that have no CJK text and very few other characters
+    # (e.g. illustration pages with "LOVE" or a stray symbol).
+    return cjk_count == 0 and total <= MIN_NON_CJK_CHARS
+
+
+def detect_paragraph_dividers(image_path, template_path, items, page_width):
+    if not os.path.exists(template_path):
+        return []
+    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    tmpl = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+    if img is None or tmpl is None:
+        return []
+
+    h, w = img.shape
+    th, tw = tmpl.shape
+    res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
+    idx = np.unravel_index(np.argsort(res, axis=None)[::-1], res.shape)
+    used = np.zeros(res.shape, dtype=bool)
+    sy = max(1, th // 2)
+    sx = max(1, tw // 2)
+
+    text_boxes = [box for _, box in items]
+    centers = []
+
+    for y, x in zip(*idx):
+        score = res[y, x]
+        if score < DIVIDER_MATCH_THRESHOLD:
+            break
+        if used[y, x]:
+            continue
+
+        cx, cy = x + tw / 2, y + th / 2
+
+        # Ignore matches too far from the horizontal center.
+        if not (page_width * 0.25 <= cx <= page_width * 0.75):
+            continue
+        # Ignore matches right at the page edges.
+        if cy < 20 or cy > h - 20:
+            continue
+        # Ignore matches that sit inside an OCR text box.
+        if any(x1 <= cx <= x2 and y1 <= cy <= y2 for x1, y1, x2, y2 in text_boxes):
+            continue
+
+        # Local background uniformity check: the icon should be on a
+        # plain background, not embedded in an illustration.
+        pad = max(tw, th) // 2
+        x0 = int(max(0, cx - tw / 2 - pad))
+        y0 = int(max(0, cy - th / 2 - pad))
+        x1 = int(min(w, cx + tw / 2 + pad))
+        y1 = int(min(h, cy + th / 2 + pad))
+        win = img[y0:y1, x0:x1].astype(np.float32)
+
+        cx0, cy0 = int(cx - tw / 2), int(cy - th / 2)
+        cx1, cy1 = int(cx + tw / 2), int(cy + th / 2)
+        mask = np.ones(win.shape, dtype=bool)
+        mask[
+            max(0, cy0 - y0) : min(win.shape[0], cy1 - y0),
+            max(0, cx0 - x0) : min(win.shape[1], cx1 - x0),
+        ] = False
+
+        if mask.sum() < 10:
+            continue
+        outside_std = np.std(win[mask])
+        if outside_std >= DIVIDER_LOCAL_STD_THRESHOLD:
+            continue
+
+        centers.append(int(cy))
+        used[max(0, y - sy) : y + sy, max(0, x - sx) : x + sx] = True
+
+    return sorted(centers)
 
 
 def is_centered_page(items, page_width):
@@ -70,7 +150,7 @@ def rebuild_page(items, page_width=0):
 
     # Centered pages (title/copyright) should keep each line on its own line.
     if is_centered_page(items, page_width):
-        return [text for text, _ in items]
+        return [(text, box[1]) for text, box in items]
 
     heights = [box[3] - box[1] for _, box in items]
     med_h = statistics.median(heights) if heights else 0
@@ -87,6 +167,7 @@ def rebuild_page(items, page_width=0):
 
     paragraphs = []
     current = []
+    current_y = None
     prev_box = None
     for text, box in items:
         is_new = False
@@ -100,18 +181,19 @@ def rebuild_page(items, page_width=0):
 
         if is_new:
             if current:
-                paragraphs.append("".join(current))
+                paragraphs.append(("".join(current), current_y))
             current = ["　　" + text]
+            current_y = box[1]
         else:
             current.append(text)
         prev_box = box
 
     if current:
-        paragraphs.append("".join(current))
+        paragraphs.append(("".join(current), current_y))
     return paragraphs
 
 
-def process_image(ocr_engine, path):
+def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH):
     results = ocr_engine.predict(str(path))
     if not results:
         return []
@@ -122,12 +204,24 @@ def process_image(ocr_engine, path):
     items = sort_lines(texts, boxes)
     filtered = [(t, b) for t, b in items if not should_remove(t)]
 
-    if is_spacing_page([t for t, _ in filtered]):
-        return ["---"]
+    if is_empty_page([t for t, _ in filtered]):
+        return []
 
     with Image.open(path) as img:
         page_width = img.width
-    return rebuild_page(filtered, page_width)
+
+    page_tuples = rebuild_page(filtered, page_width)
+
+    # Only insert paragraph-divider markers on body-text pages.
+    if page_tuples and not is_centered_page(filtered, page_width):
+        icon_ys = detect_paragraph_dividers(path, template_path, filtered, page_width)
+        ys = [line_y for _, line_y in page_tuples]
+        for y in icon_ys:
+            idx = bisect.bisect_left(ys, y)
+            page_tuples.insert(idx, ("---", y))
+            ys.insert(idx, y)
+
+    return [text for text, _ in page_tuples]
 
 
 def main():
@@ -138,6 +232,11 @@ def main():
                         help="Directory containing the screenshot images")
     parser.add_argument("output_file", nargs="?", default="output\\combined.txt",
                         help="Combined text output path")
+    parser.add_argument(
+        "--divider-icon",
+        default=DIVIDER_ICON_PATH,
+        help="Path to a small paragraph-divider icon template (PNG). If not found, no divider detection is performed.",
+    )
     args = parser.parse_args()
 
     image_paths = sorted(
@@ -162,22 +261,19 @@ def main():
     )
 
     with open(out_path, "w", encoding="utf-8") as f:
-        prev_was_divider = False
         for i, img_path in enumerate(image_paths, 1):
             name = Path(img_path).name
             print(f"[{i}/{len(image_paths)}] {name}", flush=True)
-            page_lines = process_image(ocr, img_path)
-            is_divider = page_lines == ["---"]
-            if is_divider and prev_was_divider:
+            page_lines = process_image(ocr, img_path, template_path=args.divider_icon)
+            if not page_lines:
                 continue
             f.write("\n".join(page_lines))
-            # Only insert a blank line after centered pages / dividers.
+            # Only insert a blank line after centered pages.
             # Normal body pages (indented with full-width spaces) flow continuously.
-            if is_divider or (page_lines and not page_lines[0].startswith("　　")):
-                f.write("\n\n")
-            else:
+            if any(line.startswith("　　") for line in page_lines):
                 f.write("\n")
-            prev_was_divider = is_divider
+            else:
+                f.write("\n\n")
 
     print(f"\nDone. Combined output written to: {out_path}")
     return 0
