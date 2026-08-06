@@ -64,7 +64,6 @@ KinnPorsche Story
 
 
 殘酷開場
-1
 
 
 
@@ -175,7 +174,7 @@ KinnPorsche Story
 
 
 1
-似曾相識|
+似曾相識
 
 
 
@@ -307,7 +306,6 @@ KinnPorsche Story
 
 2
 冤親債主
-1
 
 
 

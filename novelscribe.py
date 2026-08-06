@@ -61,6 +61,53 @@ def sort_lines(texts, boxes):
     return items
 
 
+def _is_bar_char(ch):
+    return ch in "|｜"
+
+
+def _box_overlaps_as_bar(box, other, h_margin=30, v_margin=5):
+    """True if `box` looks like a vertical bar next to/through `other`."""
+    horizontal_close = not (box[2] + h_margin < other[0] or box[0] - h_margin > other[2])
+    vertical_close = not (box[3] + v_margin < other[1] or box[1] - v_margin > other[3])
+    return horizontal_close and vertical_close
+
+
+def cleanup_ocr_items(items):
+    """Remove decorative bars that OCR misread as digits or pipes.
+
+    Keeps chapter numbers that sit above/below the title (no vertical overlap
+    with the CJK text) while removing side bars that run through/next to it.
+    """
+    # Strip leading/trailing bar chars from text.
+    cleaned = []
+    for text, box in items:
+        while text and _is_bar_char(text[0]):
+            text = text[1:].strip()
+        while text and _is_bar_char(text[-1]):
+            text = text[:-1].strip()
+        if text:
+            cleaned.append((text, box))
+
+    # Drop stray single-char digits/pipes that sit right next to CJK text.
+    final = []
+    for i, (text, box) in enumerate(cleaned):
+        s = text.strip()
+        if len(s) == 1 and (s.isdigit() or _is_bar_char(s)):
+            near_cjk = False
+            for j, (other_text, other_box) in enumerate(cleaned):
+                if i == j:
+                    continue
+                if not _CJK_RE.search(other_text):
+                    continue
+                if _box_overlaps_as_bar(box, other_box):
+                    near_cjk = True
+                    break
+            if near_cjk:
+                continue
+        final.append((text, box))
+    return final
+
+
 def is_empty_page(filtered_lines):
     total = sum(len(line) for line in filtered_lines)
     cjk_count = sum(len(_CJK_RE.findall(line)) for line in filtered_lines)
@@ -203,6 +250,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH):
 
     items = sort_lines(texts, boxes)
     filtered = [(t, b) for t, b in items if not should_remove(t)]
+    filtered = cleanup_ocr_items(filtered)
 
     if is_empty_page([t for t, _ in filtered]):
         return []
