@@ -272,11 +272,14 @@ def main():
             is_centered = not any(line.startswith("　　") for line in page_lines)
 
             if prev_centered is not None:
-                # Centered/empty/graphical pages get 3 empty lines (4 newlines).
-                # Body pages get 1 empty line (2 newlines) of separation.
-                if prev_centered or is_centered:
+                if not prev_centered and is_centered:
+                    # After body text and before a centered/empty/graphical page: 5 empty lines.
+                    f.write("\n\n\n\n\n\n")
+                elif prev_centered or is_centered:
+                    # Centered pages get 3 empty lines of separation.
                     f.write("\n\n\n\n")
                 else:
+                    # Body pages get 1 empty line of separation.
                     f.write("\n\n")
 
             if is_centered:
