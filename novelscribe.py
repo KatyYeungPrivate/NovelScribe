@@ -171,7 +171,12 @@ def main():
             if is_divider and prev_was_divider:
                 continue
             f.write("\n".join(page_lines))
-            f.write("\n\n")
+            # Only insert a blank line after centered pages / dividers.
+            # Normal body pages (indented with full-width spaces) flow continuously.
+            if is_divider or (page_lines and not page_lines[0].startswith("　　")):
+                f.write("\n\n")
+            else:
+                f.write("\n")
             prev_was_divider = is_divider
 
     print(f"\nDone. Combined output written to: {out_path}")
