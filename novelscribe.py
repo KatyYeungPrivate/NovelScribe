@@ -261,19 +261,30 @@ def main():
     )
 
     with open(out_path, "w", encoding="utf-8") as f:
+        prev_centered = None
         for i, img_path in enumerate(image_paths, 1):
             name = Path(img_path).name
             print(f"[{i}/{len(image_paths)}] {name}", flush=True)
             page_lines = process_image(ocr, img_path, template_path=args.divider_icon)
             if not page_lines:
                 continue
-            f.write("\n".join(page_lines))
-            # Only insert a blank line after centered pages.
-            # Normal body pages (indented with full-width spaces) flow continuously.
-            if any(line.startswith("　　") for line in page_lines):
-                f.write("\n")
+
+            is_centered = not any(line.startswith("　　") for line in page_lines)
+
+            if prev_centered is not None:
+                # Centered/empty/graphical pages get 3 empty lines (4 newlines).
+                # Body pages get 1 empty line (2 newlines) of separation.
+                if prev_centered or is_centered:
+                    f.write("\n\n\n\n")
+                else:
+                    f.write("\n\n")
+
+            if is_centered:
+                f.write("\n".join(page_lines))
             else:
-                f.write("\n\n")
+                f.write("\n\n".join(page_lines))
+
+            prev_centered = is_centered
 
     print(f"\nDone. Combined output written to: {out_path}")
     return 0
