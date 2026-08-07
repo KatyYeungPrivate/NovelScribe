@@ -45,7 +45,7 @@ pip install paddlepaddle-gpu paddleocr pillow opencv-python numpy
 
 Basic usage:
 ```bash
-python novelscribe.py input_directory output_file
+python NovelScribe.py input_directory output_file
 ```
 
 ### Command-Line Options
@@ -65,19 +65,19 @@ options:
 
 ```bash
 # Basic usage with default settings
-python novelscribe.py TestImage output/combined.txt
+python NovelScribe.py TestImage output/combined.txt
 
 # With custom header/footer detection samples
-python novelscribe.py TestImage output/combined.txt --header-samples 15
+python NovelScribe.py TestImage output/combined.txt --header-samples 15
 
 # Disable header/footer detection
-python novelscribe.py TestImage output/combined.txt --header-samples 0
+python NovelScribe.py TestImage output/combined.txt --header-samples 0
 
 # Check each page individually for header/footer
-python novelscribe.py TestImage output/combined.txt --check-per-page
+python NovelScribe.py TestImage output/combined.txt --check-per-page
 
 # With custom paragraph divider icon
-python novelscribe.py TestImage output/combined.txt --divider-icon custom_icon.png
+python NovelScribe.py TestImage output/combined.txt --divider-icon custom_icon.png
 ```
 
 ## How It Works
