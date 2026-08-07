@@ -256,10 +256,170 @@ def rebuild_page(items, page_width=0):
     return paragraphs
 
 
-def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH):
+def detect_content_region(ocr_engine, image_paths, sample_count=5):
+    """
+    Detect header/footer regions by sampling pages and finding where
+    repeated text appears at top/bottom.
+
+    Returns: (top_margin, bottom_margin) - pixels to exclude from top/bottom
+    """
+    if len(image_paths) < 2:
+        return 0, 0  # No margin if can't detect
+
+    # Sample evenly distributed pages
+    sample_indices = [int(i * len(image_paths) / sample_count)
+                      for i in range(sample_count)]
+    sample_paths = [image_paths[i] for i in sample_indices]
+
+    # Collect text positions from sample pages
+    all_y_positions = []  # List of (y_center, page_height)
+
+    for path in sample_paths:
+        results = ocr_engine.predict(str(path))
+        if not results:
+            continue
+        res = results[0]
+        texts = list(res.get("rec_texts", []))
+        boxes = list(res.get("rec_boxes", []))
+
+        with Image.open(path) as img:
+            page_height = img.height
+
+        for text, box in zip(texts, boxes):
+            text = text.strip()
+            if text:  # Skip empty
+                y_center = (box[1] + box[3]) / 2
+                all_y_positions.append((y_center, page_height))
+
+    if not all_y_positions:
+        return 0, 0
+
+    # Normalize positions as percentage of page height
+    normalized_positions = [y / h for y, h in all_y_positions]
+
+    # Find header region: text consistently appearing in top 40%
+    top_positions = [p for p in normalized_positions if p < 0.40]
+    if len(top_positions) > len(sample_paths) * 0.3:  # If >30% of samples have top text
+        top_margin = int(max(top_positions) * 100) + 40  # Add 40px buffer
+    else:
+        top_margin = 0
+
+    # Find footer region: text consistently appearing in bottom 40%
+    bottom_positions = [p for p in normalized_positions if p > 0.60]
+    if len(bottom_positions) > len(sample_paths) * 0.3:  # If >30% of samples have bottom text
+        bottom_margin = int((1 - min(bottom_positions)) * 100) + 40  # Add 40px buffer
+    else:
+        bottom_margin = 0
+
+    print(f"Detected content region: top_margin={top_margin}px, bottom_margin={bottom_margin}px")
+    return top_margin, bottom_margin
+
+
+def page_has_header_footer(ocr_engine, image_path, top_margin, bottom_margin):
+    """
+    Quick check if a specific page has text in the header/footer regions.
+    Returns: (has_header, has_footer)
+    """
+    if top_margin == 0 and bottom_margin == 0:
+        return False, False
+
+    with Image.open(image_path) as img:
+        page_height = img.height
+
+    results = ocr_engine.predict(str(image_path))
+    if not results:
+        return False, False
+
+    res = results[0]
+    texts = list(res.get("rec_texts", []))
+    boxes = list(res.get("rec_boxes", []))
+
+    has_header = False
+    has_footer = False
+
+    for text, box in zip(texts, boxes):
+        text = text.strip()
+        if not text:
+            continue
+
+        y_center = (box[1] + box[3]) / 2
+
+        # Check if text is in header region
+        if top_margin > 0 and y_center < top_margin:
+            has_header = True
+
+        # Check if text is in footer region
+        if bottom_margin > 0 and y_center > (page_height - bottom_margin):
+            has_footer = True
+
+    return has_header, has_footer
+
+
+def crop_image_to_content(image_path, top_margin, bottom_margin):
+    """
+    Crop image to exclude header/footer regions.
+    Returns cropped image path or original if no margins.
+    """
+    if top_margin == 0 and bottom_margin == 0:
+        return image_path
+
+    with Image.open(image_path) as img:
+        width, height = img.size
+
+        # Calculate crop region
+        left = 0
+        top = top_margin
+        right = width
+        bottom = height - bottom_margin
+
+        # Validate margins don't overlap
+        if top >= bottom:
+            return image_path
+
+        # Crop
+        cropped = img.crop((left, top, right, bottom))
+
+        # Save to temp file
+        path = Path(image_path)
+        temp_path = path.parent / (path.stem + '_cropped' + path.suffix)
+        cropped.save(temp_path)
+        return temp_path
+
+
+def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
+                  top_margin=0, bottom_margin=0, check_header_footer=False):
+    """
+    Process image with optional header/footer cropping.
+    Only crops if the page actually has header/footer text.
+    """
+    original_path = Path(path)
+    cropped_path = None
+
+    # Check if this page has header/footer and crop accordingly
+    if check_header_footer and (top_margin > 0 or bottom_margin > 0):
+        has_header, has_footer = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin)
+
+        actual_top = top_margin if has_header else 0
+        actual_bottom = bottom_margin if has_footer else 0
+
+        if actual_top > 0 or actual_bottom > 0:
+            cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom)
+            path = cropped_path
+    elif top_margin > 0 or bottom_margin > 0:
+        # If not checking per-page, apply margins to all pages
+        cropped_path = crop_image_to_content(original_path, top_margin, bottom_margin)
+        path = cropped_path
+
     results = ocr_engine.predict(str(path))
     if not results:
+        # Clean up temp file if it was created
+        if cropped_path and cropped_path.exists():
+            try:
+                cropped_path.unlink()
+            except:
+                pass
         return []
+
     res = results[0]
     texts = list(res.get("rec_texts", []))
     boxes = list(res.get("rec_boxes", []))
@@ -269,6 +429,12 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH):
     filtered = cleanup_ocr_items(filtered)
 
     if is_empty_page([t for t, _ in filtered]):
+        # Clean up temp file if it was created
+        if cropped_path and cropped_path.exists():
+            try:
+                cropped_path.unlink()
+            except:
+                pass
         return []
 
     with Image.open(path) as img:
@@ -285,6 +451,13 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH):
             page_tuples.insert(idx, ("---", y))
             ys.insert(idx, y)
 
+    # Clean up temp file if it was created
+    if cropped_path and cropped_path.exists():
+        try:
+            cropped_path.unlink()
+        except:
+            pass
+
     return [text for text, _ in page_tuples]
 
 
@@ -300,6 +473,17 @@ def main():
         "--divider-icon",
         default=DIVIDER_ICON_PATH,
         help="Path to a small paragraph-divider icon template (PNG). If not found, no divider detection is performed.",
+    )
+    parser.add_argument(
+        "--header-samples",
+        type=int,
+        default=5,
+        help="Number of sample images to scan for auto-detecting header/footer regions. Set to 0 to disable.",
+    )
+    parser.add_argument(
+        "--check-per-page",
+        action="store_true",
+        help="Check each page individually for header/footer before cropping. Slower but more accurate.",
     )
     args = parser.parse_args()
 
@@ -324,12 +508,21 @@ def main():
         use_textline_orientation=False,
     )
 
+    # Detect header/footer regions if enabled
+    top_margin = 0
+    bottom_margin = 0
+    if args.header_samples > 0:
+        print(f"Auto-detecting header/footer regions from {args.header_samples} sample image(s) ...")
+        top_margin, bottom_margin = detect_content_region(ocr, image_paths, sample_count=args.header_samples)
+
     parts = []
     prev_centered = None
     for i, img_path in enumerate(image_paths, 1):
         name = Path(img_path).name
         print(f"[{i}/{len(image_paths)}] {name}", flush=True)
-        page_lines = process_image(ocr, img_path, template_path=args.divider_icon)
+        page_lines = process_image(ocr, img_path, template_path=args.divider_icon,
+                                   top_margin=top_margin, bottom_margin=bottom_margin,
+                                   check_header_footer=args.check_per_page)
         if not page_lines:
             continue
 
