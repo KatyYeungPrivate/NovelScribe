@@ -418,7 +418,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
                 cropped_path.unlink()
             except:
                 pass
-        return []
+        return [], None, None, False
 
     res = results[0]
     texts = list(res.get("rec_texts", []))
@@ -435,7 +435,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
                 cropped_path.unlink()
             except:
                 pass
-        return []
+        return [], None, None, False
 
     with Image.open(path) as img:
         page_width = img.width
@@ -451,6 +451,32 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
             page_tuples.insert(idx, ("---", y))
             ys.insert(idx, y)
 
+    # Calculate body-left and indent threshold for continuation detection
+    body_left = None
+    indent_threshold = None
+    first_x = None
+    first_text = None
+    is_continuation = False
+    
+    if filtered:
+        # Calculate body-left position
+        rounded = [int(round(box[0] / 10.0)) * 10 for _, box in filtered]
+        counter = Counter(rounded)
+        repeated = [k for k, v in counter.items() if v > 1]
+        body_left = min(repeated) if repeated else min(counter)
+        
+        # Calculate indent threshold
+        heights = [box[3] - box[1] for _, box in filtered]
+        med_h = statistics.median(heights) if heights else 0
+        indent_threshold = body_left + max(20, int(med_h * 0.8))
+        
+        # Get first line info
+        first_x = filtered[0][1][0]
+        first_text = filtered[0][0]
+        
+        # Check if first line is at body-left (continuation)
+        is_continuation = (first_x < indent_threshold)
+
     # Clean up temp file if it was created
     if cropped_path and cropped_path.exists():
         try:
@@ -458,7 +484,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
         except:
             pass
 
-    return [text for text, _ in page_tuples]
+    return [text for text, _ in page_tuples], first_x, first_text, is_continuation
 
 
 def main():
@@ -477,7 +503,7 @@ def main():
     parser.add_argument(
         "--header-samples",
         type=int,
-        default=5,
+        default=10,
         help="Number of sample images to scan for auto-detecting header/footer regions. Set to 0 to disable.",
     )
     parser.add_argument(
@@ -520,13 +546,24 @@ def main():
     for i, img_path in enumerate(image_paths, 1):
         name = Path(img_path).name
         print(f"[{i}/{len(image_paths)}] {name}", flush=True)
-        page_lines = process_image(ocr, img_path, template_path=args.divider_icon,
+        page_lines, first_x, first_text, is_continuation = process_image(ocr, img_path, template_path=args.divider_icon,
                                    top_margin=top_margin, bottom_margin=bottom_margin,
                                    check_header_footer=args.check_per_page)
         if not page_lines:
             continue
 
         is_centered = not any(line.startswith("　　") for line in page_lines)
+
+        # Check if this page starts with a continuation fragment
+        if (not is_centered and page_lines and is_continuation and 
+            prev_centered is not None and not prev_centered):  # Previous was body text
+            # Merge with previous page's last paragraph
+            if parts:
+                parts[-1] = parts[-1].rstrip() + first_text
+                page_lines = page_lines[1:]  # Remove the continuation line
+                if not page_lines:
+                    prev_centered = is_centered
+                    continue
 
         if prev_centered is not None:
             if not prev_centered and is_centered:
