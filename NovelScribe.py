@@ -374,20 +374,34 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
     original_path = Path(path)
     cropped_path = None
 
-    # Check if this page has header/footer and crop accordingly
-    if check_header_footer and (top_margin > 0 or bottom_margin > 0):
-        has_header, has_footer = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin)
+    # Quick OCR check to determine if page is centered (title page) before cropping
+    # Title pages shouldn't have header/footer cropping applied
+    is_centered = False
+    if top_margin > 0 or bottom_margin > 0:
+        quick_results = ocr_engine.predict(str(path))
+        if quick_results and quick_results[0]:
+            quick_texts = list(quick_results[0].get("rec_texts", []))
+            quick_boxes = list(quick_results[0].get("rec_boxes", []))
+            quick_items = list(zip(quick_texts, quick_boxes))
+            with Image.open(path) as img:
+                page_width = img.width
+            is_centered = is_centered_page(quick_items, page_width)
 
-        actual_top = top_margin if has_header else 0
-        actual_bottom = bottom_margin if has_footer else 0
+    # Only crop if not a centered page and margins are specified
+    if not is_centered:
+        if check_header_footer and (top_margin > 0 or bottom_margin > 0):
+            has_header, has_footer = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin)
 
-        if actual_top > 0 or actual_bottom > 0:
-            cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom)
+            actual_top = top_margin if has_header else 0
+            actual_bottom = bottom_margin if has_footer else 0
+
+            if actual_top > 0 or actual_bottom > 0:
+                cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom)
+                path = cropped_path
+        elif top_margin > 0 or bottom_margin > 0:
+            # If not checking per-page, apply margins to all pages (but not centered pages)
+            cropped_path = crop_image_to_content(original_path, top_margin, bottom_margin)
             path = cropped_path
-    elif top_margin > 0 or bottom_margin > 0:
-        # If not checking per-page, apply margins to all pages
-        cropped_path = crop_image_to_content(original_path, top_margin, bottom_margin)
-        path = cropped_path
 
     results = ocr_engine.predict(str(path))
     if not results:
@@ -533,8 +547,9 @@ def main():
         is_centered = not any(line.startswith("　　") for line in page_lines)
 
         # Check if this page starts with a continuation fragment
+        # Don't apply continuation logic to centered pages (title pages)
         if (not is_centered and page_lines and is_continuation and 
-            prev_centered is not None and not prev_centered):  # Previous was body text
+            prev_centered is not None and not prev_centered and len(page_lines) > 1):  # Previous was body text and page has multiple lines
             # Merge with previous page's last paragraph
             if parts:
                 parts[-1] = parts[-1].rstrip() + first_text
@@ -564,6 +579,8 @@ def main():
     content = "".join(parts)
     content = ensure_em_dash_spacing(content)
     content = content.replace("\u2014", "\u2500")
+    # Replace OCR misread '°' with '。' and remove surrounding spaces
+    content = re.sub(r'\s*\u00b0\s*', '\u3002', content)
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(content)
