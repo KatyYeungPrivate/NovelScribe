@@ -25,28 +25,6 @@ Batch OCR tool for Traditional Chinese novel screenshots with automatic formatti
   - opencv-python
   - numpy
 
-## Page Capture Tool
-
-A companion script `PageCapture.py` is included to help automate screenshot capture for web novels:
-
-**Features:**
-- Automatically presses Win+Screenshot followed by Right Arrow
-- Configurable delay between actions
-- Useful for capturing consecutive pages in web novels or similar content
-- Saves screenshots to Windows Pictures\Screenshots folder
-
-**Usage:**
-```bash
-python PageCapture.py
-python PageCapture.py -n 10 -d 0.5  # 10 cycles with 0.5 second delay
-```
-
-**Options:**
-- `-n, --count N`: Number of cycles (default: infinite, stop with Ctrl+C)
-- `-d, --delay SECONDS`: Delay between actions in seconds (default: 1.0)
-
-**Note:** Win+Screenshot saves PNG files to `Pictures\Screenshots` on Windows. You may need to rename/move these files to match the required naming format `(N).png` for NovelScribe.
-
 ## Installation
 
 1. Clone the repository:
@@ -104,6 +82,28 @@ python NovelScribe.py -i input -o output.txt --check-per-page
 # With custom paragraph divider icon
 python NovelScribe.py -i input -o output.txt --divider-icon custom_icon.png
 ```
+
+## Page Capture Tool
+
+A companion script `PageCapture.py` is included to help automate screenshot capture for web novels:
+
+**Features:**
+- Automatically presses Win+Screenshot followed by Right Arrow
+- Configurable delay between actions
+- Useful for capturing consecutive pages in web novels or similar content
+- Saves screenshots to Windows Pictures\Screenshots folder
+
+**Usage:**
+```bash
+python PageCapture.py
+python PageCapture.py -n 10 -d 0.5  # 10 cycles with 0.5 second delay
+```
+
+**Options:**
+- `-n, --count N`: Number of cycles (default: infinite, stop with Ctrl+C)
+- `-d, --delay SECONDS`: Delay between actions in seconds (default: 1.0)
+
+**Note:** Win+Screenshot saves PNG files to `Pictures\Screenshots` on Windows. You may need to rename/move these files to match the required naming format `(N).png` for NovelScribe.
 
 ## How It Works
 
