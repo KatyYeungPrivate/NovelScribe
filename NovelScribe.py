@@ -237,13 +237,13 @@ def rebuild_page(items, page_width=0):
 
 def detect_content_region(ocr_engine, image_paths, sample_count=5):
     """
-    Detect header/footer regions by sampling pages and finding where
-    repeated text appears at top/bottom.
+    Detect header/footer regions and side margins by sampling pages and finding where
+    repeated text appears at edges.
 
-    Returns: (top_margin, bottom_margin) - pixels to exclude from top/bottom
+    Returns: (top_margin, bottom_margin, left_margin, right_margin) - pixels to exclude from edges
     """
     if len(image_paths) < 2:
-        return 0, 0  # No margin if can't detect
+        return 0, 0, 0, 0  # No margin if can't detect
 
     # Sample evenly distributed pages
     sample_indices = [int(i * len(image_paths) / sample_count)
@@ -252,6 +252,7 @@ def detect_content_region(ocr_engine, image_paths, sample_count=5):
 
     # Collect text positions from sample pages
     all_y_positions = []  # List of (y_center, page_height)
+    all_x_positions = []  # List of (x_center, page_width)
 
     for path in sample_paths:
         results = ocr_engine.predict(str(path))
@@ -263,51 +264,70 @@ def detect_content_region(ocr_engine, image_paths, sample_count=5):
 
         with Image.open(path) as img:
             page_height = img.height
+            page_width = img.width
 
         for text, box in zip(texts, boxes):
             text = text.strip()
             if text:  # Skip empty
                 y_center = (box[1] + box[3]) / 2
+                x_center = (box[0] + box[2]) / 2
                 all_y_positions.append((y_center, page_height))
+                all_x_positions.append((x_center, page_width))
 
     if not all_y_positions:
-        return 0, 0
+        return 0, 0, 0, 0
 
-    # Normalize positions as percentage of page height
-    normalized_positions = [y / h for y, h in all_y_positions]
+    # Normalize positions as percentage of page dimensions
+    normalized_y_positions = [y / h for y, h in all_y_positions]
+    normalized_x_positions = [x / w for x, w in all_x_positions]
 
     # Find header region: text consistently appearing in top 40%
-    top_positions = [p for p in normalized_positions if p < 0.40]
+    top_positions = [p for p in normalized_y_positions if p < 0.40]
     if len(top_positions) > len(sample_paths) * 0.3:  # If >30% of samples have top text
         top_margin = int(max(top_positions) * 100) + 40  # Add 40px buffer
     else:
         top_margin = 0
 
     # Find footer region: text consistently appearing in bottom 40%
-    bottom_positions = [p for p in normalized_positions if p > 0.60]
+    bottom_positions = [p for p in normalized_y_positions if p > 0.60]
     if len(bottom_positions) > len(sample_paths) * 0.3:  # If >30% of samples have bottom text
         bottom_margin = int((1 - min(bottom_positions)) * 100) + 40  # Add 40px buffer
     else:
         bottom_margin = 0
 
-    print(f"Detected content region: top_margin={top_margin}px, bottom_margin={bottom_margin}px")
-    return top_margin, bottom_margin
+    # Find left margin: text consistently appearing in left 20%
+    left_positions = [p for p in normalized_x_positions if p < 0.20]
+    if len(left_positions) > len(sample_paths) * 0.3:  # If >30% of samples have left text
+        left_margin = int(max(left_positions) * 100) + 20  # Add 20px buffer
+    else:
+        left_margin = 0
+
+    # Find right margin: text consistently appearing in right 20%
+    right_positions = [p for p in normalized_x_positions if p > 0.80]
+    if len(right_positions) > len(sample_paths) * 0.3:  # If >30% of samples have right text
+        right_margin = int((1 - min(right_positions)) * 100) + 20  # Add 20px buffer
+    else:
+        right_margin = 0
+
+    print(f"Detected content region: top={top_margin}px, bottom={bottom_margin}px, left={left_margin}px, right={right_margin}px")
+    return top_margin, bottom_margin, left_margin, right_margin
 
 
-def page_has_header_footer(ocr_engine, image_path, top_margin, bottom_margin):
+def page_has_header_footer(ocr_engine, image_path, top_margin, bottom_margin, left_margin=0, right_margin=0):
     """
-    Quick check if a specific page has text in the header/footer regions.
-    Returns: (has_header, has_footer)
+    Quick check if a specific page has text in the header/footer/side regions.
+    Returns: (has_header, has_footer, has_left, has_right)
     """
-    if top_margin == 0 and bottom_margin == 0:
-        return False, False
+    if top_margin == 0 and bottom_margin == 0 and left_margin == 0 and right_margin == 0:
+        return False, False, False, False
 
     with Image.open(image_path) as img:
         page_height = img.height
+        page_width = img.width
 
     results = ocr_engine.predict(str(image_path))
     if not results:
-        return False, False
+        return False, False, False, False
 
     res = results[0]
     texts = list(res.get("rec_texts", []))
@@ -315,6 +335,8 @@ def page_has_header_footer(ocr_engine, image_path, top_margin, bottom_margin):
 
     has_header = False
     has_footer = False
+    has_left = False
+    has_right = False
 
     for text, box in zip(texts, boxes):
         text = text.strip()
@@ -322,6 +344,7 @@ def page_has_header_footer(ocr_engine, image_path, top_margin, bottom_margin):
             continue
 
         y_center = (box[1] + box[3]) / 2
+        x_center = (box[0] + box[2]) / 2
 
         # Check if text is in header region
         if top_margin > 0 and y_center < top_margin:
@@ -331,28 +354,36 @@ def page_has_header_footer(ocr_engine, image_path, top_margin, bottom_margin):
         if bottom_margin > 0 and y_center > (page_height - bottom_margin):
             has_footer = True
 
-    return has_header, has_footer
+        # Check if text is in left region
+        if left_margin > 0 and x_center < left_margin:
+            has_left = True
+
+        # Check if text is in right region
+        if right_margin > 0 and x_center > (page_width - right_margin):
+            has_right = True
+
+    return has_header, has_footer, has_left, has_right
 
 
-def crop_image_to_content(image_path, top_margin, bottom_margin):
+def crop_image_to_content(image_path, top_margin, bottom_margin, left_margin=0, right_margin=0):
     """
-    Crop image to exclude header/footer regions.
+    Crop image to exclude header/footer and side regions.
     Returns cropped image path or original if no margins.
     """
-    if top_margin == 0 and bottom_margin == 0:
+    if top_margin == 0 and bottom_margin == 0 and left_margin == 0 and right_margin == 0:
         return image_path
 
     with Image.open(image_path) as img:
         width, height = img.size
 
         # Calculate crop region
-        left = 0
+        left = left_margin
         top = top_margin
-        right = width
+        right = width - right_margin
         bottom = height - bottom_margin
 
         # Validate margins don't overlap
-        if top >= bottom:
+        if top >= bottom or left >= right:
             return image_path
 
         # Crop
@@ -366,10 +397,10 @@ def crop_image_to_content(image_path, top_margin, bottom_margin):
 
 
 def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
-                  top_margin=0, bottom_margin=0, check_header_footer=False):
+                  top_margin=0, bottom_margin=0, left_margin=0, right_margin=0, check_header_footer=False):
     """
-    Process image with optional header/footer cropping.
-    Only crops if the page actually has header/footer text.
+    Process image with optional header/footer and side margin cropping.
+    Only crops if the page actually has header/footer/side text.
     """
     original_path = Path(path)
     cropped_path = None
@@ -377,7 +408,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
     # Quick OCR check to determine if page is centered (title page) before cropping
     # Title pages shouldn't have header/footer cropping applied
     is_centered = False
-    if top_margin > 0 or bottom_margin > 0:
+    if top_margin > 0 or bottom_margin > 0 or left_margin > 0 or right_margin > 0:
         quick_results = ocr_engine.predict(str(path))
         if quick_results and quick_results[0]:
             quick_texts = list(quick_results[0].get("rec_texts", []))
@@ -389,18 +420,20 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
 
     # Only crop if not a centered page and margins are specified
     if not is_centered:
-        if check_header_footer and (top_margin > 0 or bottom_margin > 0):
-            has_header, has_footer = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin)
+        if check_header_footer and (top_margin > 0 or bottom_margin > 0 or left_margin > 0 or right_margin > 0):
+            has_header, has_footer, has_left, has_right = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin, left_margin, right_margin)
 
             actual_top = top_margin if has_header else 0
             actual_bottom = bottom_margin if has_footer else 0
+            actual_left = left_margin if has_left else 0
+            actual_right = right_margin if has_right else 0
 
-            if actual_top > 0 or actual_bottom > 0:
-                cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom)
+            if actual_top > 0 or actual_bottom > 0 or actual_left > 0 or actual_right > 0:
+                cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom, actual_left, actual_right)
                 path = cropped_path
-        elif top_margin > 0 or bottom_margin > 0:
+        elif top_margin > 0 or bottom_margin > 0 or left_margin > 0 or right_margin > 0:
             # If not checking per-page, apply margins to all pages (but not centered pages)
-            cropped_path = crop_image_to_content(original_path, top_margin, bottom_margin)
+            cropped_path = crop_image_to_content(original_path, top_margin, bottom_margin, left_margin, right_margin)
             path = cropped_path
 
     results = ocr_engine.predict(str(path))
@@ -531,7 +564,7 @@ def main():
     bottom_margin = 0
     if args.header_samples > 0:
         print(f"Auto-detecting header/footer regions from {args.header_samples} sample image(s) ...")
-        top_margin, bottom_margin = detect_content_region(ocr, image_paths, sample_count=args.header_samples)
+        top_margin, bottom_margin, left_margin, right_margin = detect_content_region(ocr, image_paths, sample_count=args.header_samples)
 
     parts = []
     prev_centered = None
@@ -540,6 +573,7 @@ def main():
         print(f"[{i}/{len(image_paths)}] {name}", flush=True)
         page_lines, first_x, first_text, is_continuation = process_image(ocr, img_path, template_path=args.divider_icon,
                                    top_margin=top_margin, bottom_margin=bottom_margin,
+                                   left_margin=left_margin, right_margin=right_margin,
                                    check_header_footer=args.check_per_page)
         if not page_lines:
             continue
