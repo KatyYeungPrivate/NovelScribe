@@ -8,8 +8,10 @@ Batch OCR tool for Traditional Chinese novel screenshots with automatic formatti
 - **Cross-Page Continuation Detection**: Merges text fragments that span across page breaks
 - **Paragraph Reconstruction**: Automatically detects paragraph boundaries and reconstructs paragraphs
 - **Title/Body Text Recognition**: Distinguishes between centered titles and body text
+- **Title Page Protection**: Skips header/footer cropping for centered title pages to preserve title text
 - **Decorative Bar Removal**: Removes decorative bars that OCR misreads as digits or pipes
 - **Em Dash Formatting**: Ensures proper spacing around em dashes and replaces them with standard dashes
+- **OCR Error Correction**: Automatically corrects common OCR misreads (e.g., '°' → '。')
 - **Paragraph Divider Detection**: Detects paragraph divider icons (if template provided)
 
 ## Requirements
@@ -45,39 +47,40 @@ pip install paddlepaddle-gpu paddleocr pillow opencv-python numpy
 
 Basic usage:
 ```bash
-python NovelScribe.py input_directory output_file
+python NovelScribe.py
 ```
 
 ### Command-Line Options
 
 ```
-positional arguments:
-  input_dir             Directory containing the screenshot images (default: TestImage)
-  output_file           Combined text output path (default: output\combined.txt)
-
 options:
-  --divider-icon PATH    Path to paragraph-divider icon template PNG
-  --header-samples N     Number of sample images for header/footer detection (default: 10, 0 to disable)
-  --check-per-page        Check each page individually for header/footer (slower but more accurate)
+  -i, --input-dir DIR      Directory containing the screenshot images (default: input)
+  -o, --output-file PATH   Combined text output path (default: output/output.txt)
+  -d, --divider-icon PATH  Path to paragraph-divider icon template PNG
+  -s, --header-samples N   Number of sample images for header/footer detection (default: 10, 0 to disable)
+  -c, --check-per-page     Check each page individually for header/footer (slower but more accurate)
 ```
 
 ### Examples
 
 ```bash
 # Basic usage with default settings
-python NovelScribe.py TestImage output/combined.txt
+python NovelScribe.py
+
+# Specify custom input and output
+python NovelScribe.py -i my_images -o my_output.txt
 
 # With custom header/footer detection samples
-python NovelScribe.py TestImage output/combined.txt --header-samples 15
+python NovelScribe.py -i input -o output.txt --header-samples 15
 
 # Disable header/footer detection
-python NovelScribe.py TestImage output/combined.txt --header-samples 0
+python NovelScribe.py -i input -o output.txt --header-samples 0
 
 # Check each page individually for header/footer
-python NovelScribe.py TestImage output/combined.txt --check-per-page
+python NovelScribe.py -i input -o output.txt --check-per-page
 
 # With custom paragraph divider icon
-python NovelScribe.py TestImage output/combined.txt --divider-icon custom_icon.png
+python NovelScribe.py -i input -o output.txt --divider-icon custom_icon.png
 ```
 
 ## How It Works
@@ -90,7 +93,8 @@ The script samples pages to automatically detect header and footer regions:
 2. Runs OCR on sample pages to collect text positions
 3. Analyzes text positions to find consistent header/footer regions
 4. Crops images to exclude these regions before main OCR processing
-5. Works universally with any novel format without manual configuration
+5. **Title Page Protection**: Skips cropping for centered pages (title pages) to preserve title text
+6. Works universally with any novel format without manual configuration
 
 ### Cross-Page Continuation Detection
 
@@ -99,7 +103,7 @@ When a paragraph is split across pages:
 1. Tracks whether the previous page was body text
 2. Checks if the current page's first line is at body-left position (not indented)
 3. If both conditions are met, merges the first line with the previous paragraph
-4. Prevents fragments like "起" and "來" from appearing as separate lines
+4. Prevents text fragments from appearing as separate lines
 
 ### Paragraph Reconstruction
 
@@ -117,6 +121,14 @@ Within each page:
 - **Body text**: Text with consistent left edge and proper indentation
 - Different spacing rules apply to each type
 
+### OCR Error Correction
+
+The script automatically corrects common OCR misreads:
+
+- **Degree symbol correction**: Replaces '°' (degree symbol) with '。' (Chinese period)
+- **Space removal**: Removes surrounding spaces when applying corrections
+- Prevents common OCR errors from appearing in the final output
+
 ## Output Format
 
 The output file contains:
@@ -126,10 +138,11 @@ The output file contains:
 - Em dashes (—) replaced with standard dashes (─)
 - At least 3 empty lines before em-dash lines
 - Paragraph divider markers ("---") where icons are detected
+- OCR corrections applied (e.g., '°' → '。')
 
 ## File Naming
 
-Input images should be named in the format: `Screenshot (N).png` where N is the page number.
+Input images must be named with a number in parentheses for proper sorting: `any_name (N).png` where N is the page number. The script extracts the number from parentheses using regex pattern `\((\d+)\)` to sort files numerically. Examples: `page (1).png`, `image (5).png`, `Screenshot (10).png`
 
 ## Troubleshooting
 
