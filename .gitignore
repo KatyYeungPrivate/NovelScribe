@@ -1,6 +1,5 @@
 __pycache__/
 *.pyc
-TestImage/
+input/
 installed_packages.txt
 output/
-

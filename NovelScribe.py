@@ -21,14 +21,6 @@ import paddle
 from PIL import Image
 from paddleocr import PaddleOCR
 
-HEADER_FOOTER_PATTERNS = [
-    re.compile(r"^黑幫少爺愛上我\s*第一部\s*上$"),
-    re.compile(r"^本章第\s*\d+\s*頁\s*[\/／]\s*共\s*\d+\s*頁$"),
-    re.compile(r"^#\d+$"),
-    re.compile(r"^\d{1,3}%$"),
-    re.compile(r"^[<>\\[\\]◀▶]$"),
-]
-
 # CJK unified ideographs, CJK punctuation, fullwidth forms
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]")
 GAP_MULTIPLIER = 1.5
@@ -37,19 +29,6 @@ MIN_NON_CJK_CHARS = 5
 DIVIDER_ICON_PATH = "gun_icon.png"
 DIVIDER_MATCH_THRESHOLD = 0.70
 DIVIDER_LOCAL_STD_THRESHOLD = 10.0
-
-
-def should_remove(text: str) -> bool:
-    s = text.strip()
-    if any(p.fullmatch(s) for p in HEADER_FOOTER_PATTERNS):
-        return True
-    # Keep short digit-only strings (e.g. chapter numbers like "0")
-    if s.isdigit() and len(s) <= 2:
-        return False
-    # Drop short stray UI characters that are not Chinese/punctuation
-    if len(s) <= 2 and not _CJK_RE.search(s):
-        return True
-    return False
 
 
 def sort_lines(texts, boxes):
@@ -425,8 +404,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
     boxes = list(res.get("rec_boxes", []))
 
     items = sort_lines(texts, boxes)
-    filtered = [(t, b) for t, b in items if not should_remove(t)]
-    filtered = cleanup_ocr_items(filtered)
+    filtered = cleanup_ocr_items(items)
 
     if is_empty_page([t for t, _ in filtered]):
         # Clean up temp file if it was created
@@ -491,23 +469,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="NovelScribe: batch OCR for Traditional Chinese novel screenshots"
     )
-    parser.add_argument("input_dir", nargs="?", default="TestImage",
+    parser.add_argument("-i", "--input-dir", default="input",
                         help="Directory containing the screenshot images")
-    parser.add_argument("output_file", nargs="?", default="output\\combined.txt",
+    parser.add_argument("-o", "--output-file", default="output/output.txt",
                         help="Combined text output path")
     parser.add_argument(
-        "--divider-icon",
+        "-d", "--divider-icon",
         default=DIVIDER_ICON_PATH,
         help="Path to a small paragraph-divider icon template (PNG). If not found, no divider detection is performed.",
     )
     parser.add_argument(
-        "--header-samples",
+        "-s", "--header-samples",
         type=int,
         default=10,
         help="Number of sample images to scan for auto-detecting header/footer regions. Set to 0 to disable.",
     )
     parser.add_argument(
-        "--check-per-page",
+        "-c", "--check-per-page",
         action="store_true",
         help="Check each page individually for header/footer before cropping. Slower but more accurate.",
     )
