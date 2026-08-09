@@ -295,17 +295,17 @@ def detect_content_region(ocr_engine, image_paths, sample_count=5):
     else:
         bottom_margin = 0
 
-    # Find left margin: text consistently appearing in left 20%
-    left_positions = [p for p in normalized_x_positions if p < 0.20]
-    if len(left_positions) > len(sample_paths) * 0.3:  # If >30% of samples have left text
-        left_margin = int(max(left_positions) * 100) + 20  # Add 20px buffer
+    # Find left margin: text consistently appearing in left 25%
+    left_positions = [p for p in normalized_x_positions if p < 0.25]
+    if len(left_positions) > len(sample_paths) * 0.2:  # If >20% of samples have left text
+        left_margin = int(max(left_positions) * 100) + 30  # Add 30px buffer
     else:
         left_margin = 0
 
-    # Find right margin: text consistently appearing in right 20%
-    right_positions = [p for p in normalized_x_positions if p > 0.80]
-    if len(right_positions) > len(sample_paths) * 0.3:  # If >30% of samples have right text
-        right_margin = int((1 - min(right_positions)) * 100) + 20  # Add 20px buffer
+    # Find right margin: text consistently appearing in right 25%
+    right_positions = [p for p in normalized_x_positions if p > 0.75]
+    if len(right_positions) > len(sample_paths) * 0.2:  # If >20% of samples have right text
+        right_margin = int((1 - min(right_positions)) * 100) + 30  # Add 30px buffer
     else:
         right_margin = 0
 
@@ -406,9 +406,9 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
     cropped_path = None
 
     # Quick OCR check to determine if page is centered (title page) before cropping
-    # Title pages shouldn't have header/footer cropping applied
+    # Title pages shouldn't have header/footer cropping applied, but side margins should still be removed
     is_centered = False
-    if top_margin > 0 or bottom_margin > 0 or left_margin > 0 or right_margin > 0:
+    if top_margin > 0 or bottom_margin > 0:
         quick_results = ocr_engine.predict(str(path))
         if quick_results and quick_results[0]:
             quick_texts = list(quick_results[0].get("rec_texts", []))
@@ -418,23 +418,27 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
                 page_width = img.width
             is_centered = is_centered_page(quick_items, page_width)
 
-    # Only crop if not a centered page and margins are specified
-    if not is_centered:
-        if check_header_footer and (top_margin > 0 or bottom_margin > 0 or left_margin > 0 or right_margin > 0):
-            has_header, has_footer, has_left, has_right = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin, left_margin, right_margin)
+    # Calculate final margins: side margins always apply to all pages, header/footer only for non-centered pages
+    # Navigation elements are consistent across all pages, so apply side margins without per-page checking
+    actual_left = left_margin
+    actual_right = right_margin
 
+    if is_centered:
+        actual_top = 0
+        actual_bottom = 0
+    else:
+        if check_header_footer and (top_margin > 0 or bottom_margin > 0):
+            has_header, has_footer, has_left, has_right = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin, left_margin, right_margin)
             actual_top = top_margin if has_header else 0
             actual_bottom = bottom_margin if has_footer else 0
-            actual_left = left_margin if has_left else 0
-            actual_right = right_margin if has_right else 0
+        else:
+            actual_top = top_margin
+            actual_bottom = bottom_margin
 
-            if actual_top > 0 or actual_bottom > 0 or actual_left > 0 or actual_right > 0:
-                cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom, actual_left, actual_right)
-                path = cropped_path
-        elif top_margin > 0 or bottom_margin > 0 or left_margin > 0 or right_margin > 0:
-            # If not checking per-page, apply margins to all pages (but not centered pages)
-            cropped_path = crop_image_to_content(original_path, top_margin, bottom_margin, left_margin, right_margin)
-            path = cropped_path
+    # Apply cropping if any margins are specified
+    if actual_top > 0 or actual_bottom > 0 or actual_left > 0 or actual_right > 0:
+        cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom, actual_left, actual_right)
+        path = cropped_path
 
     results = ocr_engine.predict(str(path))
     if not results:
