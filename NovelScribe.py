@@ -186,6 +186,33 @@ def is_centered_page(items, page_width):
     return mean_x > page_width * 0.30
 
 
+def _body_left_and_threshold(items):
+    """Return (body_left, indent_threshold, med_h)."""
+    heights = [box[3] - box[1] for _, box in items]
+    med_h = statistics.median(heights) if heights else 0
+
+    # Body-left is the leftmost x that is part of the main text column.
+    # We find the smallest x that has a neighbor within a small band, which
+    # keeps stray page numbers/footers from being chosen while still allowing
+    # a single wrapped line at the true margin to count.
+    x_positions = sorted({box[0] for _, box in items})
+    cluster_width = max(80, int(med_h * 2.5))
+    body_left = None
+    for i, x in enumerate(x_positions):
+        for other in x_positions[i + 1:]:
+            if other - x <= cluster_width:
+                body_left = x
+                break
+        if body_left is not None:
+            break
+    if body_left is None:
+        body_left = min(box[0] for _, box in items)
+
+    # A paragraph-start line is shifted right by at least ~1/3 full-width character.
+    indent_threshold = body_left + max(10, int(med_h * 0.25))
+    return body_left, indent_threshold, med_h
+
+
 def rebuild_page(items, page_width=0):
     if not items:
         return []
@@ -194,17 +221,7 @@ def rebuild_page(items, page_width=0):
     if is_centered_page(items, page_width):
         return [(text, box[1]) for text, box in items]
 
-    heights = [box[3] - box[1] for _, box in items]
-    med_h = statistics.median(heights) if heights else 0
-
-    # Find the leftmost repeated left edge (body-left) rounded to 10 px.
-    rounded = [int(round(box[0] / 10.0)) * 10 for _, box in items]
-    counter = Counter(rounded)
-    repeated = [k for k, v in counter.items() if v > 1]
-    body_left = min(repeated) if repeated else min(counter)
-
-    # A paragraph-start line is shifted right by ~2 full-width characters.
-    indent_threshold = body_left + max(20, int(med_h * 0.8))
+    body_left, indent_threshold, med_h = _body_left_and_threshold(items)
     gap_threshold = med_h * GAP_MULTIPLIER
 
     paragraphs = []
@@ -488,21 +505,12 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
     is_continuation = False
     
     if filtered:
-        # Calculate body-left position
-        rounded = [int(round(box[0] / 10.0)) * 10 for _, box in filtered]
-        counter = Counter(rounded)
-        repeated = [k for k, v in counter.items() if v > 1]
-        body_left = min(repeated) if repeated else min(counter)
-        
-        # Calculate indent threshold
-        heights = [box[3] - box[1] for _, box in filtered]
-        med_h = statistics.median(heights) if heights else 0
-        indent_threshold = body_left + max(20, int(med_h * 0.8))
-        
+        body_left, indent_threshold, _ = _body_left_and_threshold(filtered)
+
         # Get first line info
         first_x = filtered[0][1][0]
         first_text = filtered[0][0]
-        
+
         # Check if first line is at body-left (continuation)
         is_continuation = (first_x < indent_threshold)
 
