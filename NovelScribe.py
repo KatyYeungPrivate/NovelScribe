@@ -237,9 +237,9 @@ def rebuild_page(items, page_width=0):
             starts_with_whitespace = text.startswith((' ', '　', '\t'))
             
             # Only treat as new paragraph if:
-            # 1. It's indented (strictly greater than threshold + tolerance) AND doesn't start with whitespace, OR
+            # 1. It's indented (strictly greater than threshold) AND doesn't start with whitespace, OR
             # 2. There's a large vertical gap
-            if box[0] > indent_threshold + 2 and not starts_with_whitespace:
+            if box[0] > indent_threshold and not starts_with_whitespace:
                 is_new = True
             elif prev_box and box[1] - prev_box[3] > gap_threshold:
                 is_new = True
@@ -524,8 +524,7 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
         # Check if first line is at body-left (continuation)
         # Also check if first line starts with whitespace, which indicates continuation
         starts_with_whitespace = first_text.startswith((' ', '　', '\t'))
-        # Add a small tolerance (2 pixels) to handle slight variations in OCR detection
-        is_continuation = (first_x <= indent_threshold + 2) or starts_with_whitespace
+        is_continuation = (first_x < indent_threshold) or starts_with_whitespace
 
     # Clean up temp file if it was created
     if cropped_path and cropped_path.exists():
