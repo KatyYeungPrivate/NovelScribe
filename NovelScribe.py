@@ -186,6 +186,35 @@ def is_centered_page(items, page_width):
     return mean_x > page_width * 0.30
 
 
+def filter_header_footer_content(items):
+    """Filter out header/footer content based on text patterns."""
+    filtered = []
+    for text, box in items:
+        # Skip lines that look like header/footer content
+        # Patterns: page numbers, percentages, copyright symbols, short titles
+        text_stripped = text.strip()
+        
+        # Skip if it's just a number or percentage
+        if text_stripped.replace('%', '').replace('#', '').replace('©', '').replace('／', '').replace('/', '').replace(' ', '').replace('　', '').isdigit():
+            continue
+        
+        # Skip if it's a page number pattern like "本章第11頁／共11頁"
+        if '本章第' in text_stripped and '頁' in text_stripped:
+            continue
+        
+        # Skip if it's very short and looks like navigation (e.g., "#449", "25%")
+        if len(text_stripped) < 10 and any(c in text_stripped for c in '#%©'):
+            continue
+        
+        # Skip if it's the book title appearing alone
+        if text_stripped == '黑幫少爺愛上我第二部上':
+            continue
+        
+        filtered.append((text, box))
+    
+    return filtered
+
+
 def _body_left_and_threshold(items):
     """Return (body_left, indent_threshold, med_h)."""
     heights = [box[3] - box[1] for _, box in items]
@@ -223,6 +252,13 @@ def rebuild_page(items, page_width=0):
 
     body_left, indent_threshold, med_h = _body_left_and_threshold(items)
     gap_threshold = med_h * GAP_MULTIPLIER
+    
+    # Check if the first line is a continuation (starts at body-left or with whitespace)
+    first_is_continuation = False
+    if items:
+        first_text, first_box = items[0]
+        first_starts_with_whitespace = first_text.startswith((' ', '　', '\t'))
+        first_is_continuation = (first_box[0] < indent_threshold + 2) or first_starts_with_whitespace
 
     paragraphs = []
     current = []
@@ -236,13 +272,22 @@ def rebuild_page(items, page_width=0):
             # Check if this line starts with whitespace (continuation)
             starts_with_whitespace = text.startswith((' ', '　', '\t'))
             
-            # Only treat as new paragraph if:
-            # 1. It's indented (strictly greater than threshold) AND doesn't start with whitespace, OR
-            # 2. There's a large vertical gap
-            if box[0] > indent_threshold and not starts_with_whitespace:
-                is_new = True
-            elif prev_box and box[1] - prev_box[3] > gap_threshold:
-                is_new = True
+            # Special handling: if the first line was a continuation, be more lenient with paragraph detection
+            # to avoid splitting continuation lines that are at the same indentation
+            if first_is_continuation:
+                # Only treat as new paragraph if:
+                # 1. It's significantly indented (more than threshold + margin) AND doesn't start with whitespace, OR
+                # 2. There's a large vertical gap
+                if box[0] >= indent_threshold + 10 and not starts_with_whitespace:
+                    is_new = True
+                elif prev_box and box[1] - prev_box[3] > gap_threshold:
+                    is_new = True
+            else:
+                # Normal paragraph detection
+                if box[0] >= indent_threshold and not starts_with_whitespace:
+                    is_new = True
+                elif prev_box and box[1] - prev_box[3] > gap_threshold:
+                    is_new = True
 
         if is_new:
             if current:
@@ -483,6 +528,9 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
 
     items = sort_lines(texts, boxes)
     filtered = cleanup_ocr_items(items)
+    
+    # Filter out header/footer content based on text patterns
+    filtered = filter_header_footer_content(filtered)
 
     if is_empty_page([t for t, _ in filtered]):
         # Clean up temp file if it was created
@@ -524,7 +572,8 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
         # Check if first line is at body-left (continuation)
         # Also check if first line starts with whitespace, which indicates continuation
         starts_with_whitespace = first_text.startswith((' ', '　', '\t'))
-        is_continuation = (first_x < indent_threshold) or starts_with_whitespace
+        # Add a small tolerance (2 pixels) to handle OCR variations
+        is_continuation = (first_x < indent_threshold + 2) or starts_with_whitespace
 
     # Clean up temp file if it was created
     if cropped_path and cropped_path.exists():
