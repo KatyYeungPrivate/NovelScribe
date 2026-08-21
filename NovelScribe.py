@@ -233,7 +233,13 @@ def rebuild_page(items, page_width=0):
         if not current:
             is_new = True
         else:
-            if box[0] >= indent_threshold:
+            # Check if this line starts with whitespace (continuation)
+            starts_with_whitespace = text.startswith((' ', '　', '\t'))
+            
+            # Only treat as new paragraph if:
+            # 1. It's indented (strictly greater than threshold + tolerance) AND doesn't start with whitespace, OR
+            # 2. There's a large vertical gap
+            if box[0] > indent_threshold + 2 and not starts_with_whitespace:
                 is_new = True
             elif prev_box and box[1] - prev_box[3] > gap_threshold:
                 is_new = True
@@ -244,7 +250,11 @@ def rebuild_page(items, page_width=0):
             current = ["　　" + text]
             current_y = box[1]
         else:
-            current.append(text)
+            # If line starts with whitespace, add it without the leading whitespace
+            if text.startswith((' ', '　', '\t')):
+                current.append(text.lstrip(' 　\t'))
+            else:
+                current.append(text)
         prev_box = box
 
     if current:
@@ -512,7 +522,10 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
         first_text = filtered[0][0]
 
         # Check if first line is at body-left (continuation)
-        is_continuation = (first_x < indent_threshold)
+        # Also check if first line starts with whitespace, which indicates continuation
+        starts_with_whitespace = first_text.startswith((' ', '　', '\t'))
+        # Add a small tolerance (2 pixels) to handle slight variations in OCR detection
+        is_continuation = (first_x <= indent_threshold + 2) or starts_with_whitespace
 
     # Clean up temp file if it was created
     if cropped_path and cropped_path.exists():
@@ -595,14 +608,20 @@ def main():
         # Check if this page starts with a continuation fragment
         # Don't apply continuation logic to centered pages (title pages)
         if (not is_centered and page_lines and is_continuation and 
-            prev_centered is not None and not prev_centered and len(page_lines) > 1):  # Previous was body text and page has multiple lines
+            prev_centered is not None and not prev_centered):  # Previous was body text
             # Merge with previous page's last paragraph
             if parts:
-                parts[-1] = parts[-1].rstrip() + first_text
-                page_lines = page_lines[1:]  # Remove the continuation line
-                if not page_lines:
-                    prev_centered = is_centered
-                    continue
+                # Use the first paragraph from page_lines (not first_text which is just the first OCR line)
+                first_paragraph = page_lines[0]
+                # Remove leading whitespace and merge
+                first_paragraph_clean = first_paragraph.lstrip(' 　\t')
+                parts[-1] = parts[-1].rstrip() + first_paragraph_clean
+                # Add the remaining paragraphs from this page with proper paragraph spacing
+                for line in page_lines[1:]:
+                    parts.append("\n\n" + line)
+                # Skip normal processing for this page since we've merged everything
+                prev_centered = is_centered
+                continue
 
         if prev_centered is not None:
             if not prev_centered and is_centered:
@@ -618,6 +637,8 @@ def main():
         if is_centered:
             parts.append("\n".join(page_lines))
         else:
+            # page_lines are already properly formatted paragraphs from rebuild_page
+            # Join them with double newlines for proper paragraph spacing
             parts.append("\n\n".join(page_lines))
 
         prev_centered = is_centered
