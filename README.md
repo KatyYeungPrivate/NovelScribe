@@ -5,7 +5,9 @@ Batch OCR tool for Traditional Chinese novel screenshots with automatic formatti
 ## Features
 
 - **Automatic Header/Footer Detection**: Samples pages to detect and remove header/footer regions before OCR
-- **Cross-Page Continuation Detection**: Merges text fragments that span across page breaks
+- **Header/Footer Content Filtering**: Automatically filters out navigation elements, page numbers, and titles from OCR output
+- **Cross-Page Continuation Detection**: Merges text fragments that span across page breaks with OCR tolerance
+- **Within-Page Continuation Detection**: Handles continuation lines at same indentation level
 - **Paragraph Reconstruction**: Automatically detects paragraph boundaries and reconstructs paragraphs
 - **Title/Body Text Recognition**: Distinguishes between centered titles and body text
 - **Title Page Protection**: Skips header/footer cropping for centered title pages to preserve title text
@@ -118,14 +120,35 @@ The script samples pages to automatically detect header and footer regions:
 5. **Title Page Protection**: Skips cropping for centered pages (title pages) to preserve title text
 6. Works universally with any novel format without manual configuration
 
+### Header/Footer Content Filtering
+
+After OCR processing, the script filters out header/footer content:
+
+1. Removes navigation elements (e.g., "#449", "25%")
+2. Removes page number patterns (e.g., "本章第11頁／共11頁")
+3. Removes copyright symbols and metadata
+4. Removes standalone book titles
+5. Ensures only body text appears in the final output
+
 ### Cross-Page Continuation Detection
 
 When a paragraph is split across pages:
 
 1. Tracks whether the previous page was body text
 2. Checks if the current page's first line is at body-left position (not indented)
-3. If both conditions are met, merges the first line with the previous paragraph
-4. Prevents text fragments from appearing as separate lines
+3. Uses OCR tolerance (2 pixels) to handle detection variations
+4. If both conditions are met, merges the first line with the previous paragraph
+5. Prevents text fragments from appearing as separate lines
+
+### Within-Page Continuation Detection
+
+When continuation lines appear at the same indentation within a page:
+
+1. Detects if the first line of a page is a continuation
+2. Applies lenient paragraph detection for continuation pages
+3. Requires significant indentation (+10 pixels) to start a new paragraph
+4. Merges continuation lines that are at the same indentation level
+5. Prevents false paragraph breaks in continuation text
 
 ### Paragraph Reconstruction
 
