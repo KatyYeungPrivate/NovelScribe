@@ -186,33 +186,6 @@ def is_centered_page(items, page_width):
     return mean_x > page_width * 0.30
 
 
-def filter_header_footer_content(items):
-    """Filter out header/footer content based on text patterns."""
-    filtered = []
-    for text, box in items:
-        # Skip lines that look like header/footer content
-        # Patterns: page numbers, percentages, copyright symbols, short titles
-        text_stripped = text.strip()
-        
-        # Skip if it's just a number or percentage
-        if text_stripped.replace('%', '').replace('#', '').replace('©', '').replace('／', '').replace('/', '').replace(' ', '').replace('　', '').isdigit():
-            continue
-        
-        # Skip if it's a page number pattern like "本章第11頁／共11頁"
-        if '本章第' in text_stripped and '頁' in text_stripped:
-            continue
-        
-        # Skip if it's very short and looks like navigation (e.g., "#449", "25%")
-        if len(text_stripped) < 10 and any(c in text_stripped for c in '#%©'):
-            continue
-        
-        # Note: Removed hardcoded book title filter since improved centered page detection should handle it
-        
-        filtered.append((text, box))
-    
-    return filtered
-
-
 def _body_left_and_threshold(items):
     """Return (body_left, indent_threshold, med_h)."""
     heights = [box[3] - box[1] for _, box in items]
@@ -516,9 +489,6 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
 
     items = sort_lines(filtered_texts, filtered_boxes)
     filtered = cleanup_ocr_items(items)
-    
-    # Filter out header/footer content based on text patterns
-    # filtered = filter_header_footer_content(filtered)  # Temporarily disabled to test margin-based solution only
 
     if is_empty_page([t for t, _ in filtered]):
         return [], None, None, False
