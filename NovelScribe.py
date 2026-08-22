@@ -206,9 +206,7 @@ def filter_header_footer_content(items):
         if len(text_stripped) < 10 and any(c in text_stripped for c in '#%©'):
             continue
         
-        # Skip if it's the book title appearing alone
-        if text_stripped == '黑幫少爺愛上我第二部上':
-            continue
+        # Note: Removed hardcoded book title filter since improved centered page detection should handle it
         
         filtered.append((text, box))
     
@@ -471,74 +469,58 @@ def crop_image_to_content(image_path, top_margin, bottom_margin, left_margin=0, 
 def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
                   top_margin=0, bottom_margin=0, left_margin=0, right_margin=0, check_header_footer=False):
     """
-    Process image with optional header/footer and side margin cropping.
-    Only crops if the page actually has header/footer/side text.
+    Process image with optional header/footer and side margin filtering.
+    Filters out text that falls within margin regions based on OCR position.
     """
     original_path = Path(path)
-    cropped_path = None
-
-    # Quick OCR check to determine if page is centered (title page) before cropping
-    # Title pages shouldn't have header/footer cropping applied, but side margins should still be removed
-    is_centered = False
-    if top_margin > 0 or bottom_margin > 0:
-        quick_results = ocr_engine.predict(str(path))
-        if quick_results and quick_results[0]:
-            quick_texts = list(quick_results[0].get("rec_texts", []))
-            quick_boxes = list(quick_results[0].get("rec_boxes", []))
-            quick_items = list(zip(quick_texts, quick_boxes))
-            with Image.open(path) as img:
-                page_width = img.width
-            is_centered = is_centered_page(quick_items, page_width)
-
-    # Calculate final margins: side margins always apply to all pages, header/footer only for non-centered pages
-    # Navigation elements are consistent across all pages, so apply side margins without per-page checking
-    actual_left = left_margin
-    actual_right = right_margin
-
-    if is_centered:
-        actual_top = 0
-        actual_bottom = 0
-    else:
-        if check_header_footer and (top_margin > 0 or bottom_margin > 0):
-            has_header, has_footer, has_left, has_right = page_has_header_footer(ocr_engine, path, top_margin, bottom_margin, left_margin, right_margin)
-            actual_top = top_margin if has_header else 0
-            actual_bottom = bottom_margin if has_footer else 0
-        else:
-            actual_top = top_margin
-            actual_bottom = bottom_margin
-
-    # Apply cropping if any margins are specified
-    if actual_top > 0 or actual_bottom > 0 or actual_left > 0 or actual_right > 0:
-        cropped_path = crop_image_to_content(original_path, actual_top, actual_bottom, actual_left, actual_right)
-        path = cropped_path
-
+    
+    # Run OCR on the full image
     results = ocr_engine.predict(str(path))
     if not results:
-        # Clean up temp file if it was created
-        if cropped_path and cropped_path.exists():
-            try:
-                cropped_path.unlink()
-            except:
-                pass
         return [], None, None, False
 
     res = results[0]
     texts = list(res.get("rec_texts", []))
     boxes = list(res.get("rec_boxes", []))
+    
+    # Get page dimensions for position filtering
+    with Image.open(path) as img:
+        page_height = img.height
+        page_width = img.width
+    
+    # Filter out text in margin regions based on position
+    filtered_texts = []
+    filtered_boxes = []
+    for text, box in zip(texts, boxes):
+        y_center = (box[1] + box[3]) / 2
+        x_center = (box[0] + box[2]) / 2
+        
+        # Skip if in header region
+        if top_margin > 0 and y_center < top_margin:
+            continue
+        
+        # Skip if in footer region
+        if bottom_margin > 0 and y_center > (page_height - bottom_margin):
+            continue
+        
+        # Skip if in left margin region
+        if left_margin > 0 and x_center < left_margin:
+            continue
+        
+        # Skip if in right margin region
+        if right_margin > 0 and x_center > (page_width - right_margin):
+            continue
+        
+        filtered_texts.append(text)
+        filtered_boxes.append(box)
 
-    items = sort_lines(texts, boxes)
+    items = sort_lines(filtered_texts, filtered_boxes)
     filtered = cleanup_ocr_items(items)
     
     # Filter out header/footer content based on text patterns
-    filtered = filter_header_footer_content(filtered)
+    # filtered = filter_header_footer_content(filtered)  # Temporarily disabled to test margin-based solution only
 
     if is_empty_page([t for t, _ in filtered]):
-        # Clean up temp file if it was created
-        if cropped_path and cropped_path.exists():
-            try:
-                cropped_path.unlink()
-            except:
-                pass
         return [], None, None, False
 
     with Image.open(path) as img:
@@ -574,13 +556,6 @@ def process_image(ocr_engine, path, template_path=DIVIDER_ICON_PATH,
         starts_with_whitespace = first_text.startswith((' ', '　', '\t'))
         # Add a small tolerance (2 pixels) to handle OCR variations
         is_continuation = (first_x < indent_threshold + 2) or starts_with_whitespace
-
-    # Clean up temp file if it was created
-    if cropped_path and cropped_path.exists():
-        try:
-            cropped_path.unlink()
-        except:
-            pass
 
     return [text for text, _ in page_tuples], first_x, first_text, is_continuation
 
