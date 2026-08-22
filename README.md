@@ -5,12 +5,11 @@ Batch OCR tool for Traditional Chinese novel screenshots with automatic formatti
 ## Features
 
 - **Automatic Header/Footer Detection**: Samples pages to detect and remove header/footer regions before OCR
-- **Header/Footer Content Filtering**: Automatically filters out navigation elements, page numbers, and titles from OCR output
+- **Position-Based Content Filtering**: Filters OCR results based on their position within detected margin regions
 - **Cross-Page Continuation Detection**: Merges text fragments that span across page breaks with OCR tolerance
 - **Within-Page Continuation Detection**: Handles continuation lines at same indentation level
 - **Paragraph Reconstruction**: Automatically detects paragraph boundaries and reconstructs paragraphs
 - **Title/Body Text Recognition**: Distinguishes between centered titles and body text
-- **Title Page Protection**: Skips header/footer cropping for centered title pages to preserve title text
 - **Decorative Bar Removal**: Removes decorative bars that OCR misreads as digits or pipes
 - **Em Dash Formatting**: Ensures proper spacing around em dashes and replaces them with standard dashes
 - **OCR Error Correction**: Automatically corrects common OCR misreads (e.g., '°' → '。')
@@ -116,19 +115,18 @@ The script samples pages to automatically detect header and footer regions:
 1. Samples N images evenly distributed throughout the document
 2. Runs OCR on sample pages to collect text positions
 3. Analyzes text positions to find consistent header/footer regions
-4. Crops images to exclude these regions before main OCR processing
-5. **Title Page Protection**: Skips cropping for centered pages (title pages) to preserve title text
-6. Works universally with any novel format without manual configuration
+4. Filters OCR results based on position to exclude text in margin regions
+5. Works universally with any novel format without manual configuration
 
-### Header/Footer Content Filtering
+### Position-Based Content Filtering
 
-After OCR processing, the script filters out header/footer content:
+After OCR processing, the script filters out header/footer content based on position:
 
-1. Removes navigation elements (e.g., "#449", "25%")
-2. Removes page number patterns (e.g., "本章第11頁／共11頁")
-3. Removes copyright symbols and metadata
-4. Removes standalone book titles
-5. Ensures only body text appears in the final output
+1. Detects margin regions (top, bottom, left, right) from sample pages
+2. For each OCR result, checks if its center falls within margin regions
+3. Filters out text in header (top margin) and footer (bottom margin) regions
+4. Filters out text in side margin regions (left/right)
+5. Ensures only body text content is included in the final output
 
 ### Cross-Page Continuation Detection
 
